@@ -1,0 +1,9 @@
+[package]
+name = "mandelbrot"
+version = "0.1.0"
+authors = ["DJ Edmonson <djedmonson@gmail.com>"]
+
+
+[dependencies]
+clap = "*"
+image = "*"
