@@ -228,8 +228,6 @@ fn main() {
         
         let size = Size {width: img_width, height: img_height};
         
-        let mut imgbuf = image::ImageBuffer::new(size.width as u32, size.height as u32);
-
         let render_start = PreciseTime::now();
         let mut phase_start = PreciseTime::now();
         
@@ -239,6 +237,8 @@ fn main() {
 
         phase_start = PreciseTime::now();
         
+        let mut imgbuf = image::ImageBuffer::new(size.width as u32, size.height as u32);
+
         for (x, y, pixel) in imgbuf.enumerate_pixels_mut() {
             let idx = point2idx(Point{ x: x as f32, y: y as f32}, size.width as u32) as usize;
         
