@@ -219,7 +219,14 @@ fn main() {
 
         let _ = imgbuf.save(output_path);
     } else {
-        let output_path = config_file_path.with_extension("png");
+        let output_path = config_file_path.with_extension("ppm");
+
+        let mut output_file =  match File::create(&output_path) {
+            Err(why) => panic!("Could not open output file at {}: {}",
+                               output_path.display(),
+                               Error::description(&why)),
+            Ok(f) => f,
+        };
 
         let img_width = config.ppu as f32 * config.window.size.width;
         let img_height = config.ppu as f32 * config.window.size.height;
@@ -236,23 +243,30 @@ fn main() {
         println!("Generation Duration:\n{}", phase_start.to(PreciseTime::now()));
 
         phase_start = PreciseTime::now();
-        
-        let mut imgbuf = image::ImageBuffer::new(size.width as u32, size.height as u32);
 
-        for (x, y, pixel) in imgbuf.enumerate_pixels_mut() {
-            let idx = point2idx(Point{ x: x as f32, y: y as f32}, size.width as u32) as usize;
+        writeln!(output_file, "P6").unwrap();
+        writeln!(output_file, "{} {}", img_width as usize, img_height as usize).unwrap();
+        writeln!(output_file, "255").unwrap();
         
-            let it = imgdata[idx];
+        let mut linebuf = vec![0; img_width as usize * 3];
 
-            let (r, g, b) = color_for_val_with_config(it, &config);
-            
-            *pixel = image::Rgb([r as u8, g as u8, b as u8]);
+        for y in 0 .. img_height as usize {
+            for x in 0 .. img_width as usize {
+                let idx = point2idx(Point{ x: x as f32, y: y as f32}, size.width as u32) as usize;
+        
+                let it = imgdata[idx];
+
+                let (r, g, b) = color_for_val_with_config(it, &config);
+
+                let offset = 3 * x;
+
+                linebuf[offset]     = r;
+                linebuf[offset + 1] = g;
+                linebuf[offset + 2] = b
+            }
+            output_file.write(&linebuf).unwrap();
         }
         println!("Render Duration:\n{}", phase_start.to(PreciseTime::now()));
-        phase_start = PreciseTime::now();
-
-        let _ = imgbuf.save(output_path);
-        println!("Save Duration:\n{}", phase_start.to(PreciseTime::now()));
         println!("Total Render Duration:\n{}", render_start.to(PreciseTime::now()));
     }
 
