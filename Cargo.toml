@@ -7,3 +7,4 @@ authors = ["DJ Edmonson <djedmonson@gmail.com>"]
 [dependencies]
 clap = "*"
 image = "*"
+rustc-serialize = "*"

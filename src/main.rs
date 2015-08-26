@@ -1,55 +1,59 @@
 #[macro_use]
 extern crate clap;
-use clap::{Arg, App};
-
 extern crate image;
+extern crate rustc_serialize;
 
+use clap::{Arg, App};
+use rustc_serialize::json;
+
+use std::fs::File;
 use std::path::Path;
+use std::error::Error;
+use std::io::prelude::*;
 
-#[derive(Debug)]
+#[derive(Debug, RustcDecodable, RustcEncodable)]
 struct Size {
     width: f32,
     height: f32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, RustcDecodable, RustcEncodable)]
 struct Point {
     x: f32,
     y: f32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, RustcDecodable, RustcEncodable)]
 struct Rect {
     origin: Point,
     size: Size,
 }
 
-const MAXITER: usize = 1000;
-
-const COLORS: &'static [(f32, f32, f32)] = &[(0.0, 7.0, 100.0),
-                                             (32.0, 107.0, 203.0),
-                                             (237.0, 255.0, 255.0),
-                                             (255.0, 170.0, 0.0),
-                                             (0.0, 2.0, 0.0)];
-const SCALE: f32 = 50.0;
-
-
-fn size_parser(input: String) -> Option<Size> {
-    let v: Vec<&str> = input.split('x').collect();
-    
-    if v.len() == 2 {
-        let w = v[0].parse::<u32>();
-        let h = v[1].parse::<u32>();
-        
-        if w.is_ok() && h.is_ok() {
-            Some( Size { width: w.unwrap() as f32, height: h.unwrap() as f32 } )
-        } else {
-            None
-        }
-    } else {
-        None
-    }
+#[derive(Debug, RustcDecodable, RustcEncodable)]
+struct Config {
+    ppu: u32,
+    limit: u32,
+    color_steps: f32,
+    color_components: u8,
+    color_palette: Vec<Vec<f32>>,
+    window: Rect,
 }
+
+/*
+ Original Colors:
+(0.0, 7.0, 100.0)
+(32.0, 107.0, 203.0)
+(237.0, 255.0, 255.0)
+(255.0, 170.0, 0.0)
+(0.0, 2.0, 0.0)
+
+
+(246.0, 103.0, 51.0) Orange
+(134.0, 137.0, 140.0) Innovation
+(255.0, 255.0, 255.0) White
+(58.0, 73.0, 88.0) Blue Ridge
+(82.0, 45.0, 128.0) Purple
+*/
 
 fn idx2point(idx: u32, width: u32) -> Point {
     let x = idx % width;
@@ -61,11 +65,11 @@ fn point2idx(p: Point, width: u32) -> u32 {
     width * (p.y as u32) + (p.x as u32)
 }
 
-fn mandelbrot(cx: f32, cy: f32) -> u32 {
+fn mandelbrot(cx: f32, cy: f32, limit: u32) -> u32 {
     let mut x = cx;
     let mut y = cy;
     let mut count = 0;
-    while count < MAXITER {
+    while count < limit {
         let xy = x * y;
         let xx = x * x;
         let yy = y * y;
@@ -80,7 +84,10 @@ fn mandelbrot(cx: f32, cy: f32) -> u32 {
     count as u32
 }
 
-fn gen_mandelbrot(size: &Size, window: &Rect) -> Vec<u32> {
+fn gen_mandelbrot(size: &Size, config: &Config) -> Vec<u32> {
+    let window = &config.window;
+    let limit = config.limit;
+    
     let data_size = size.width as u32 * size.height as u32;
     let mut data = Vec::with_capacity(data_size as usize);
     
@@ -93,7 +100,7 @@ fn gen_mandelbrot(size: &Size, window: &Rect) -> Vec<u32> {
         let cx = window.origin.x + px * window.size.width;
         let cy = (window.origin.y + window.size.height) - py * window.size.height;
         
-        let c = mandelbrot(cx, cy);
+        let c = mandelbrot(cx, cy, limit);
         
         data.push(c);
     }
@@ -101,25 +108,56 @@ fn gen_mandelbrot(size: &Size, window: &Rect) -> Vec<u32> {
     data
 }
 
-fn color_for_val(val: u32) -> (u8, u8, u8) {
+fn rbg_from_palette(palette: &Vec<Vec<f32>>, idx: usize) -> (f32, f32, f32) {
+    let color = &palette[idx];
+    (color[0], color[1], color[2])
+}
+
+fn color_for_val_with_config(val: u32, config: &Config) -> (u8, u8, u8) {
     let (r, g, b);
-    if val == MAXITER as u32 {
+    
+    let limit = config.limit;
+    let steps = config.color_steps;
+    let palette = &config.color_palette;
+    
+    if val == limit as u32 {
         r = 0;
         g = 0;
         b = 0;
     } else {
-        let val = (val as f32 % SCALE) * (COLORS.len() as f32) / SCALE;
-        let left = val as usize % COLORS.len();
-        let right = (left + 1) % COLORS.len();
+        let val = (val as f32 % steps) * (palette.len() as f32) / steps;
+        let left = val as usize % palette.len();
+        let right = (left + 1) % palette.len();
 
         let p = val - left as f32;
-        let (r1, g1, b1) = COLORS[left];
-        let (r2, g2, b2) = COLORS[right];
+        let (r1, g1, b1) = rbg_from_palette(palette, left);
+        let (r2, g2, b2) = rbg_from_palette(palette, right);
         r = (r1 + (r2 - r1) * p) as u8;
         g = (g1 + (g2 - g1) * p) as u8;
         b = (b1 + (b2 - b1) * p) as u8;
     }
-    (r as u8, g as u8, b as u8)
+    (r, g, b)
+}
+
+fn validate_config(conf: &Config) {
+
+    // Check if limit is 'to large'
+    if conf.limit > 10000 {
+        panic!("Config Error: limit is over 10,000");
+    }
+
+    // Check if color component count is valid
+    match conf.color_components {
+        3 => println!("Using RBG colors"),
+        _ => panic!("Unsuported color component count"),
+    };
+    
+    // Check colors in palette match component count
+    for v in &conf.color_palette {
+        if v.len() != conf.color_components as usize {
+            panic!("Config Error: Color {:?} does not match color component count", v);
+        }
+    }
 }
 
 fn main() {    
@@ -127,74 +165,91 @@ fn main() {
         .version(&crate_version!()[..])
         .author("DJ Edmonson <djedmonson@gmail.com>")
         .about("Generates a mandelbrot image")
-        .arg(Arg::with_name("SIZE")
-             .short("s")
-             .long("size")
-             .help("Size of image to produce in pixels")
-             .required(true)
-             .takes_value(true)
-             .validator(|input| {
-                 let res = size_parser(input);
-                 if res.is_some() {
-                     Ok(())
-                 } else {
-                     Err(String::from("Size must be specified in the format (width)x(height), where width and height are integers"))
-                 }
-             }))
-        .arg(Arg::with_name("FILE")
-             .short("f")
-             .long("file")
-             .help("File path to save image to")
+        .arg(Arg::with_name("CONFIG")
+             .long("config")
+             .help("Config JSON file to use. Output will be at <input_file_path>.png")
              .required(true)
              .takes_value(true))
-        .arg(Arg::with_name("MIN-X")
-             .long("min-x")
-             .help("Minimum x value of set. Defaults to -2.0")
-             .takes_value(true))
-        .arg(Arg::with_name("MAX-X")
-             .long("max-x")
-             .help("Maximum x value of set. Defaults to 2.0")
-             .takes_value(true))
-        .arg(Arg::with_name("MIN-Y")
-             .long("min-y")
-             .help("Minimum y value of set. Defaults to -2.0")
-             .takes_value(true))
-        .arg(Arg::with_name("MAX-Y")
-             .long("max-y")
-             .help("Maximum y value of set. Defaults to 2.0")
-             .takes_value(true))
+        .arg(Arg::with_name("output-palette")
+             .long("output-palette")
+             .help("Generate image with 100px squares of the provided colors in order. Outputs to <input_file_path>-palette.png"))
         .get_matches();
 
-    let size = size_parser(args.value_of("SIZE").unwrap().to_string()).unwrap();
-    println!("Value for size: {:?}", size);
+    let config_file_path = Path::new(args.value_of("CONFIG").unwrap());
+    println!("Getting config from {}", config_file_path.display());
+    
+    let mut config_file = match File::open(&config_file_path) {
+        Err(why) => panic!("Could not open config file at {}: {}",
+                           config_file_path.display(),
+                           Error::description(&why)),
+        Ok(f) => f,
+    };
 
-    let file_path = args.value_of("FILE").unwrap();
-    println!("Output File Path: {:?}", file_path);
+    let mut config_json = String::new();
+    match config_file.read_to_string(&mut config_json) {
+        Err(why) => panic!("Could not read config file at {}: {}",
+                           config_file_path.display(),
+                           Error::description(&why)),
+        Ok(_) => println!("Read config file"),
+    };
 
-    let min_x = args.value_of("MIN-X").unwrap_or("-2.0").parse::<f32>().unwrap_or_else(|e| { panic!("min_x err:  {}", e) });
-    let max_x = args.value_of("MAX-X").unwrap_or("2.0").parse::<f32>().unwrap_or_else(|e| { panic!("max_x err:  {}", e) });
-    let min_y = args.value_of("MIN-Y").unwrap_or("-2.0").parse::<f32>().unwrap_or_else(|e| { panic!("min_y err:  {}", e) });
-    let max_y = args.value_of("MAX-Y").unwrap_or("2.0").parse::<f32>().unwrap_or_else(|e| { panic!("max_y err:  {}", e) });
-    
-    let width = max_x - min_x;
-    let height = max_y - min_y;
-    
-    let window = Rect { origin: Point {x: min_x, y: min_y}, size: Size {width: width, height: height} };
-    println!("Output window: {:?}", window);
-    
-    let mut imgbuf = image::ImageBuffer::new(size.width as u32, size.height as u32);
+    let config: Config = match json::decode(&config_json) {
+        Err(why) => panic!("Error parsing config JSON: {}",
+                           why),
+        Ok(conf) => conf,
+    };
 
-    let imgdata = gen_mandelbrot(&size, &window);
-    
-    for (x, y, pixel) in imgbuf.enumerate_pixels_mut() {
-        let idx = point2idx(Point{ x: x as f32, y: y as f32}, size.width as u32) as usize;
+    validate_config(&config);
+
+    if args.is_present("output-palette") {
+        let root = match config_file_path.file_stem() {
+            None => unreachable!(),
+            Some(r) => r.to_str().unwrap().to_string(),
+        };
+
+        let output_path_string = root + "-palette.png";
+        let output_path = Path::new(&output_path_string);
+        println!("Generating color palette image at {}", output_path.display());
+
+        let width = config.color_palette.len() * 100;
+        let height = 100;
+
+        let mut imgbuf = image::ImageBuffer::new(width as u32, height as u32);
+
+        for (x, _, pixel) in imgbuf.enumerate_pixels_mut() {
+            let color_idx = (x as f32 / width as f32) * config.color_palette.len() as f32;
+
+            let (r, b, g) = rbg_from_palette(&config.color_palette, color_idx as usize);
+
+            *pixel = image::Rgb([r as u8, b as u8, g as u8]);
+        }
+
+        let _ = imgbuf.save(output_path);
+    } else {
+        let output_path = config_file_path.with_extension("png");
+
+        let img_width = config.ppu as f32 * config.window.size.width;
+        let img_height = config.ppu as f32 * config.window.size.height;
+
+        println!("Generating image at {} with size {}x{}", output_path.display(), img_width, img_height);
         
-        let it = imgdata[idx];
-
-        let (r, g, b) = color_for_val(it);
+        let size = Size {width: img_width, height: img_height};
         
-        *pixel = image::Rgb([r, g, b]);
+        let mut imgbuf = image::ImageBuffer::new(size.width as u32, size.height as u32);
+
+        let imgdata = gen_mandelbrot(&size, &config);
+    
+        for (x, y, pixel) in imgbuf.enumerate_pixels_mut() {
+            let idx = point2idx(Point{ x: x as f32, y: y as f32}, size.width as u32) as usize;
+        
+            let it = imgdata[idx];
+
+            let (r, g, b) = color_for_val_with_config(it, &config);
+            
+            *pixel = image::Rgb([r as u8, g as u8, b as u8]);
+        }
+
+        let _ = imgbuf.save(output_path);
     }
-
-    let _ = imgbuf.save(Path::new(file_path));
 }
+
