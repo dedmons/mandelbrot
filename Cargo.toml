@@ -6,5 +6,7 @@ authors = ["DJ Edmonson <djedmonson@gmail.com>"]
 
 [dependencies]
 clap = "*"
+time = "*"
 image = "*"
+threadpool = "*"
 rustc-serialize = "*"

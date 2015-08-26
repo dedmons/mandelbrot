@@ -1,15 +1,20 @@
 #[macro_use]
 extern crate clap;
+extern crate time;
 extern crate image;
+extern crate threadpool;
 extern crate rustc_serialize;
 
 use clap::{Arg, App};
+use time::PreciseTime;
 use rustc_serialize::json;
+use threadpool::ThreadPool;
 
 use std::fs::File;
 use std::path::Path;
 use std::error::Error;
 use std::io::prelude::*;
+use std::sync::mpsc::channel;
 
 #[derive(Debug, RustcDecodable, RustcEncodable)]
 struct Size {
@@ -38,22 +43,6 @@ struct Config {
     color_palette: Vec<Vec<f32>>,
     window: Rect,
 }
-
-/*
- Original Colors:
-(0.0, 7.0, 100.0)
-(32.0, 107.0, 203.0)
-(237.0, 255.0, 255.0)
-(255.0, 170.0, 0.0)
-(0.0, 2.0, 0.0)
-
-
-(246.0, 103.0, 51.0) Orange
-(134.0, 137.0, 140.0) Innovation
-(255.0, 255.0, 255.0) White
-(58.0, 73.0, 88.0) Blue Ridge
-(82.0, 45.0, 128.0) Purple
-*/
 
 fn idx2point(idx: u32, width: u32) -> Point {
     let x = idx % width;
@@ -160,7 +149,9 @@ fn validate_config(conf: &Config) {
     }
 }
 
-fn main() {    
+fn main() {
+    let start = PreciseTime::now();
+    
     let args = App::new("Mandelbrot Generator")
         .version(&crate_version!()[..])
         .author("DJ Edmonson <djedmonson@gmail.com>")
@@ -201,6 +192,8 @@ fn main() {
 
     validate_config(&config);
 
+    println!("Bootstrap time:\n{}", start.to(PreciseTime::now()));
+    
     if args.is_present("output-palette") {
         let root = match config_file_path.file_stem() {
             None => unreachable!(),
@@ -237,8 +230,15 @@ fn main() {
         
         let mut imgbuf = image::ImageBuffer::new(size.width as u32, size.height as u32);
 
+        let render_start = PreciseTime::now();
+        let mut phase_start = PreciseTime::now();
+        
         let imgdata = gen_mandelbrot(&size, &config);
-    
+
+        println!("Generation Duration:\n{}", phase_start.to(PreciseTime::now()));
+
+        phase_start = PreciseTime::now();
+        
         for (x, y, pixel) in imgbuf.enumerate_pixels_mut() {
             let idx = point2idx(Point{ x: x as f32, y: y as f32}, size.width as u32) as usize;
         
@@ -248,8 +248,14 @@ fn main() {
             
             *pixel = image::Rgb([r as u8, g as u8, b as u8]);
         }
+        println!("Render Duration:\n{}", phase_start.to(PreciseTime::now()));
+        phase_start = PreciseTime::now();
 
         let _ = imgbuf.save(output_path);
+        println!("Save Duration:\n{}", phase_start.to(PreciseTime::now()));
+        println!("Total Render Duration:\n{}", render_start.to(PreciseTime::now()));
     }
+
+    println!("Total time:\n{}", start.to(PreciseTime::now()));
 }
 
