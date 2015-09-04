@@ -8,27 +8,26 @@ extern crate rustc_serialize;
 use clap::{Arg, App};
 use time::PreciseTime;
 use rustc_serialize::json;
-use threadpool::ThreadPool;
 
 use std::fs::File;
 use std::path::Path;
 use std::error::Error;
 use std::io::prelude::*;
-use std::sync::mpsc::channel;
+use std::thread::{self, JoinHandle};
 
-#[derive(Debug, RustcDecodable, RustcEncodable)]
+#[derive(Debug, RustcDecodable, RustcEncodable, Clone)]
 struct Size {
     width: f32,
     height: f32,
 }
 
-#[derive(Debug, RustcDecodable, RustcEncodable)]
+#[derive(Debug, RustcDecodable, RustcEncodable, Clone)]
 struct Point {
     x: f32,
     y: f32,
 }
 
-#[derive(Debug, RustcDecodable, RustcEncodable)]
+#[derive(Debug, RustcDecodable, RustcEncodable, Clone)]
 struct Rect {
     origin: Point,
     size: Size,
@@ -76,22 +75,55 @@ fn mandelbrot(cx: f32, cy: f32, limit: u32) -> u32 {
 fn gen_mandelbrot(size: &Size, config: &Config) -> Vec<u32> {
     let window = &config.window;
     let limit = config.limit;
+
+    let thread_count = 4;
     
     let data_size = size.width as u32 * size.height as u32;
-    let mut data = Vec::with_capacity(data_size as usize);
-    
-    for i in 0..data_size {
-        let p = idx2point(i, size.width as u32);
+    let mut data: Vec<u32> = Vec::with_capacity(data_size as usize);
 
-        let px: f32 = p.x / size.width;
-        let py: f32 = p.y / size.height;
+    let mut guards: Vec<JoinHandle<Vec<u32>>> = vec![];
+
+    let thread_work = data_size / thread_count;
+    let mut thread_start = 0;
+    let mut thread_end = thread_start + thread_work;
+    
+    for t in 0..thread_count {
+        let t_size = size.clone();
+        let t_window = window.clone();
+        let t_limit = limit;
+
+        let guard = thread::spawn(move || {
+            let thread_size = thread_end - thread_start;
+            let mut thread_data = Vec::with_capacity(thread_size as usize);
+            
+            for i in thread_start..thread_end { 
+                let p = idx2point(i, t_size.width as u32);
+
+                let px: f32 = p.x / t_size.width;
+                let py: f32 = p.y / t_size.height;
         
-        let cx = window.origin.x + px * window.size.width;
-        let cy = (window.origin.y + window.size.height) - py * window.size.height;
-        
-        let c = mandelbrot(cx, cy, limit);
-        
-        data.push(c);
+                let cx = t_window.origin.x + px * t_window.size.width;
+                let cy = (t_window.origin.y + t_window.size.height) - py * t_window.size.height;
+                
+                let c = mandelbrot(cx, cy, t_limit);
+
+                thread_data.push(c);
+            }
+
+            thread_data
+        });
+
+        guards.push(guard);
+
+        thread_start = thread_end;
+        thread_end = thread_end + thread_work;
+        if thread_end > data_size {
+            thread_end = data_size;
+        }
+    }
+
+    for g in guards {
+        data.extend(g.join().unwrap().into_iter());
     }
 
     data
