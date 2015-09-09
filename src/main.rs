@@ -76,23 +76,27 @@ fn gen_mandelbrot(size: &Size, config: &Config) -> Vec<u32> {
     let window = &config.window;
     let limit = config.limit;
 
-    let thread_count = 4;
+    let thread_count = 16;
     
     let data_size = size.width as u32 * size.height as u32;
     let mut data: Vec<u32> = Vec::with_capacity(data_size as usize);
 
     let mut guards: Vec<JoinHandle<Vec<u32>>> = vec![];
 
-    let thread_work = data_size / thread_count;
+    let thread_work = (data_size as f32 / thread_count as f32).ceil() as u32;
     let mut thread_start = 0;
     let mut thread_end = thread_start + thread_work;
+
+    println!("Data Size: {}\nThread Work: {}", data_size, thread_work);
     
     for t in 0..thread_count {
         let t_size = size.clone();
         let t_window = window.clone();
         let t_limit = limit;
-
+        
         let guard = thread::spawn(move || {
+            println!("Starting thread [{}] working on data {} to {}", t, thread_start, thread_end);
+            
             let thread_size = thread_end - thread_start;
             let mut thread_data = Vec::with_capacity(thread_size as usize);
             
@@ -118,6 +122,10 @@ fn gen_mandelbrot(size: &Size, config: &Config) -> Vec<u32> {
         thread_start = thread_end;
         thread_end = thread_end + thread_work;
         if thread_end > data_size {
+            thread_end = data_size;
+        }
+
+        if t == thread_count - 2 {
             thread_end = data_size;
         }
     }
