@@ -2,6 +2,7 @@
 extern crate clap;
 extern crate time;
 extern crate image;
+extern crate num_cpus;
 extern crate threadpool;
 extern crate rustc_serialize;
 
@@ -76,7 +77,7 @@ fn gen_mandelbrot(size: &Size, config: &Config) -> Vec<u32> {
     let window = &config.window;
     let limit = config.limit;
 
-    let thread_count = 16;
+    let thread_count = (num_cpus::get() as f32 * 1.0).floor() as usize;
     
     let data_size = size.width as u32 * size.height as u32;
     let mut data: Vec<u32> = Vec::with_capacity(data_size as usize);
@@ -93,6 +94,14 @@ fn gen_mandelbrot(size: &Size, config: &Config) -> Vec<u32> {
         let t_size = size.clone();
         let t_window = window.clone();
         let t_limit = limit;
+
+        if thread_end > data_size {
+            thread_end = data_size;
+        }
+
+        if t == thread_count - 1 {
+            thread_end = data_size;
+        }
         
         let guard = thread::spawn(move || {
             println!("Starting thread [{}] working on data {} to {}", t, thread_start, thread_end);
@@ -121,13 +130,6 @@ fn gen_mandelbrot(size: &Size, config: &Config) -> Vec<u32> {
 
         thread_start = thread_end;
         thread_end = thread_end + thread_work;
-        if thread_end > data_size {
-            thread_end = data_size;
-        }
-
-        if t == thread_count - 2 {
-            thread_end = data_size;
-        }
     }
 
     for g in guards {

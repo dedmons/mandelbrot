@@ -8,5 +8,6 @@ authors = ["DJ Edmonson <djedmonson@gmail.com>"]
 clap = "*"
 time = "*"
 image = "*"
+num_cpus = "*"
 threadpool = "*"
 rustc-serialize = "*"
