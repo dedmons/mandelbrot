@@ -77,14 +77,15 @@ fn gen_mandelbrot(size: &Size, config: &Config) -> Vec<u32> {
     let window = &config.window;
     let limit = config.limit;
 
-    let thread_count = (num_cpus::get() as f32 * 1.0).floor() as usize;
+    // Seems like a good number on most devices
+    let thread_count = num_cpus::get() * 3;
     
     let data_size = size.width as u32 * size.height as u32;
     let mut data: Vec<u32> = Vec::with_capacity(data_size as usize);
 
     let mut guards: Vec<JoinHandle<Vec<u32>>> = vec![];
 
-    let thread_work = (data_size as f32 / thread_count as f32).ceil() as u32;
+    let thread_work = (data_size as f64 / thread_count as f64).ceil() as u32;
     let mut thread_start = 0;
     let mut thread_end = thread_start + thread_work;
 
